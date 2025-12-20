@@ -10,10 +10,12 @@ import (
 )
 
 type Todo struct {
-	ID          int64        `json:"id"`
-	Name        string       `json:"name"`
-	Completed   bool         `json:"completed"`
-	CompletedAt sql.NullTime `json:"completed_at"`
-	CreatedAt   time.Time    `json:"created_at"`
-	UpdatedAt   time.Time    `json:"updated_at"`
+	ID          int64          `json:"id"`
+	Name        string         `json:"name"`
+	Completed   bool           `json:"completed"`
+	CompletedAt sql.NullTime   `json:"completed_at"`
+	CreatedAt   time.Time      `json:"created_at"`
+	UpdatedAt   time.Time      `json:"updated_at"`
+	Priority    string         `json:"priority"`
+	Tag         sql.NullString `json:"tag"`
 }

@@ -4,13 +4,15 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	_ "github.com/mattn/go-sqlite3"
 	"log"
 	"os"
 	"strings"
 	"text/tabwriter"
 	"time"
+	"tsk/internal/database"
 	db "tsk/internal/database"
+
+	_ "github.com/mattn/go-sqlite3"
 )
 
 type apiConfig struct {
@@ -19,7 +21,7 @@ type apiConfig struct {
 
 func NewTodo() *apiConfig {
 
-	connection, err := sql.Open("sqlite3", "../tsk.db")
+	connection, err := sql.Open("sqlite3", "./tsk.db")
 
 	if err != nil {
 		log.Fatal(err)
@@ -31,6 +33,8 @@ func NewTodo() *apiConfig {
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
 		name TEXT NOT NULL,
 		completed BOOLEAN NOT NULL DEFAULT 0,
+		priority TEXT NOT NULL CHECK(priority IN ('low', 'medium', 'high')) DEFAULT 'medium',
+		tag TEXT,
 		completed_at DATETIME,
 		created_at DATETIME NOT NULL,
 		updated_at DATETIME NOT NULL
@@ -48,10 +52,12 @@ func NewTodo() *apiConfig {
 	return &apiConfig
 }
 
-func (apiConfig *apiConfig) AddTodo(name string) {
+func (apiConfig *apiConfig) AddTodo(name string, priority string, tag string) (database.Todo, error) {
 	newTodo := db.CreateTodoParams{
 		Name:        name,
 		Completed:   false,
+		Priority:    priority,
+		Tag:         sql.NullString{String: tag, Valid: true},
 		CompletedAt: sql.NullTime{},
 		CreatedAt:   time.Now(),
 		UpdatedAt:   time.Now(),
@@ -59,13 +65,12 @@ func (apiConfig *apiConfig) AddTodo(name string) {
 
 	ctx := context.Background()
 
-	apiConfig.DB.CreateTodo(ctx, newTodo)
+	return apiConfig.DB.CreateTodo(ctx, newTodo)
 }
 
 func (apiConfig *apiConfig) ListTodo() error {
 	w := tabwriter.NewWriter(os.Stdout, 1, 1, 1, ' ', tabwriter.Debug)
-	fmt.Println("in the function")
-	headers := []string{"ID", "Name", "Created At", "Updated At", "Completed", "Completed At"}
+	headers := []string{"ID", "Name", "Priority", "Tag", "Created At", "Updated At", "Completed", "Completed At"}
 
 	formatRow := func(cells []string) string {
 		return "| " + strings.Join(cells, " \t| ") + " \t|"
@@ -74,7 +79,6 @@ func (apiConfig *apiConfig) ListTodo() error {
 	tsk, err := apiConfig.DB.GetAllTodos(context.Background())
 
 	if err != nil {
-		fmt.Println("error")
 		return err
 	}
 	if len(tsk) == 0 {
@@ -87,6 +91,8 @@ func (apiConfig *apiConfig) ListTodo() error {
 		cells := []string{
 			fmt.Sprintf("%d", todo.ID),
 			todo.Name,
+			todo.Priority,
+			todo.Tag.String,
 			todo.CreatedAt.Format("2006-01-02 15:04:05"),
 			todo.UpdatedAt.Format("2006-01-02 15:04:05"),
 			fmt.Sprintf("%v", todo.Completed),

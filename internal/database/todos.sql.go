@@ -32,23 +32,27 @@ func (q *Queries) CompleteTodo(ctx context.Context, arg CompleteTodoParams) (int
 }
 
 const createTodo = `-- name: CreateTodo :one
-INSERT INTO todos (name,  completed, completed_at, created_at, updated_at)
-VALUES (?1, ?2, ?3, ?4, ?5)
-RETURNING id, name, completed, completed_at, created_at, updated_at
+INSERT INTO todos (name,  completed, priority, tag, completed_at, created_at, updated_at)
+VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+RETURNING id, name, completed, completed_at, created_at, updated_at, priority, tag
 `
 
 type CreateTodoParams struct {
-	Name        string       `json:"name"`
-	Completed   bool         `json:"completed"`
-	CompletedAt sql.NullTime `json:"completed_at"`
-	CreatedAt   time.Time    `json:"created_at"`
-	UpdatedAt   time.Time    `json:"updated_at"`
+	Name        string         `json:"name"`
+	Completed   bool           `json:"completed"`
+	Priority    string         `json:"priority"`
+	Tag         sql.NullString `json:"tag"`
+	CompletedAt sql.NullTime   `json:"completed_at"`
+	CreatedAt   time.Time      `json:"created_at"`
+	UpdatedAt   time.Time      `json:"updated_at"`
 }
 
 func (q *Queries) CreateTodo(ctx context.Context, arg CreateTodoParams) (Todo, error) {
 	row := q.db.QueryRowContext(ctx, createTodo,
 		arg.Name,
 		arg.Completed,
+		arg.Priority,
+		arg.Tag,
 		arg.CompletedAt,
 		arg.CreatedAt,
 		arg.UpdatedAt,
@@ -61,6 +65,8 @@ func (q *Queries) CreateTodo(ctx context.Context, arg CreateTodoParams) (Todo, e
 		&i.CompletedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Priority,
+		&i.Tag,
 	)
 	return i, err
 }
@@ -76,7 +82,7 @@ func (q *Queries) DeleteTodo(ctx context.Context, id int64) error {
 }
 
 const getAllTodo = `-- name: GetAllTodo :many
-SELECT id, name, completed, completed_at, created_at, updated_at FROM todos
+SELECT id, name, completed, completed_at, created_at, updated_at, priority, tag FROM todos
 `
 
 func (q *Queries) GetAllTodo(ctx context.Context) ([]Todo, error) {
@@ -95,6 +101,8 @@ func (q *Queries) GetAllTodo(ctx context.Context) ([]Todo, error) {
 			&i.CompletedAt,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.Priority,
+			&i.Tag,
 		); err != nil {
 			return nil, err
 		}
@@ -110,7 +118,7 @@ func (q *Queries) GetAllTodo(ctx context.Context) ([]Todo, error) {
 }
 
 const getAllTodos = `-- name: GetAllTodos :many
-SELECT id, name, completed, completed_at, created_at, updated_at FROM todos
+SELECT id, name, completed, completed_at, created_at, updated_at, priority, tag FROM todos
 ORDER BY created_at DESC
 `
 
@@ -130,6 +138,8 @@ func (q *Queries) GetAllTodos(ctx context.Context) ([]Todo, error) {
 			&i.CompletedAt,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.Priority,
+			&i.Tag,
 		); err != nil {
 			return nil, err
 		}
@@ -145,7 +155,7 @@ func (q *Queries) GetAllTodos(ctx context.Context) ([]Todo, error) {
 }
 
 const getTodoById = `-- name: GetTodoById :one
-SELECT id, name, completed, completed_at, created_at, updated_at FROM todos
+SELECT id, name, completed, completed_at, created_at, updated_at, priority, tag FROM todos
 WHERE id = ?
 `
 
@@ -159,6 +169,8 @@ func (q *Queries) GetTodoById(ctx context.Context, id int64) (Todo, error) {
 		&i.CompletedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Priority,
+		&i.Tag,
 	)
 	return i, err
 }

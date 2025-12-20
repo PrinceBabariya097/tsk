@@ -3,6 +3,7 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"tsk/color"
 
 	"github.com/spf13/cobra"
 )
@@ -16,7 +17,8 @@ var rootCmd = &cobra.Command{
 
 func Execute() {
 	if err := rootCmd.Execute(); err != nil {
-		fmt.Fprintf(os.Stderr, "Oops. An error occurred while executing tsk '%s'\n", err)
+		errorString := color.ApplyStyle("Oops. An error occurred while executing tsk '%s'\n", color.Red, color.Bold)
+		fmt.Fprintf(os.Stderr, errorString, err)
 		os.Exit(1)
 	}
 }

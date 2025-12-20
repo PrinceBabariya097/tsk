@@ -21,8 +21,8 @@ SET completed = 1, completed_at = ?, updated_at = ?
 WHERE id = ?;
 
 -- name: CreateTodo :one
-INSERT INTO todos (name,  completed, completed_at, created_at, updated_at)
-VALUES (:name, :completed, :completed_at, :created_at, :updated_at)
+INSERT INTO todos (name,  completed, priority, tag, completed_at, created_at, updated_at)
+VALUES (:name, :completed, :priority, :tag, :completed_at, :created_at, :updated_at)
 RETURNING *;
 
 -- name: GetAllTodo :many
