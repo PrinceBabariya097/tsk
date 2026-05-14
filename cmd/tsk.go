@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -17,6 +18,19 @@ import (
 
 type apiConfig struct {
 	DB *db.Queries
+}
+
+type Params struct {
+	Limit     int64
+	Priority  string
+	Tag       string
+	All       bool
+	Completed bool
+	Pending   bool
+}
+
+func convertToSQLCParams(opts Params) interface{} {
+	return opts
 }
 
 func NewTodo() *apiConfig {
@@ -68,40 +82,89 @@ func (apiConfig *apiConfig) AddTodo(name string, priority string, tag string) (d
 	return apiConfig.DB.CreateTodo(ctx, newTodo)
 }
 
-func (apiConfig *apiConfig) ListTodo() error {
-	w := tabwriter.NewWriter(os.Stdout, 1, 1, 1, ' ', tabwriter.Debug)
-	headers := []string{"ID", "Name", "Priority", "Tag", "Created At", "Updated At", "Completed", "Completed At"}
+func (apiConfig *apiConfig) ListTodo(completed bool, pending bool, all bool, priority string, tag string, sortBy string, limit int64, orderType string) error {
 
-	formatRow := func(cells []string) string {
-		return "| " + strings.Join(cells, " \t| ") + " \t|"
+	var tsk []database.Todo
+	var err error
+
+	priorityParams := db.GetTodosByFiltersByPriorityParams{
+		All:       all,
+		Completed: completed,
+		Pending:   pending,
+		Priority:  priority,
+		Tag:       tag,
+		Limit:     limit,
+		Offset:    0,
+		IsDesc:    1,
 	}
 
-	tsk, err := apiConfig.DB.GetAllTodos(context.Background())
+	createdParams := db.GetTodosByFiltersByCreatedAtParams{
+		All:       all,
+		Completed: completed,
+		Pending:   pending,
+		Priority:  priority,
+		Tag:       tag,
+		Limit:     limit,
+		Offset:    0,
+		IsDesc:    1,
+	}
+
+	defaultParams := db.GetTodosByFiltersByIdParams{
+		All:       all,
+		Completed: completed,
+		Pending:   pending,
+		Priority:  priority,
+		Tag:       tag,
+		Limit:     limit,
+		Offset:    0,
+		IsDesc:    1,
+	}
+
+	if orderType == "ASC" {
+		priorityParams.IsDesc = 0
+		createdParams.IsDesc = 0
+		defaultParams.IsDesc = 0
+	} else if orderType != "DESC" {
+		return errors.New("invalid order type: please use ASC or DESC")
+	}
+
+	switch sortBy {
+	case "priority":
+		tsk, err = apiConfig.DB.GetTodosByFiltersByPriority(context.Background(), priorityParams)
+	case "created_at":
+		tsk, err = apiConfig.DB.GetTodosByFiltersByCreatedAt(context.Background(), createdParams)
+	default:
+		tsk, err = apiConfig.DB.GetTodosByFiltersById(context.Background(), defaultParams)
+	}
 
 	if err != nil {
 		return err
 	}
+
 	if len(tsk) == 0 {
-		fmt.Println("You don't have any task yet. Please add any task first")
-		return nil
+		return errors.New("you have not added any tasks yet")
 	}
-	fmt.Fprintln(w, formatRow(headers))
 
-	for _, todo := range tsk {
-		cells := []string{
-			fmt.Sprintf("%d", todo.ID),
-			todo.Name,
-			todo.Priority,
-			todo.Tag.String,
-			todo.CreatedAt.Format("2006-01-02 15:04:05"),
-			todo.UpdatedAt.Format("2006-01-02 15:04:05"),
-			fmt.Sprintf("%v", todo.Completed),
-			fmt.Sprintf("%v", todo.CompletedAt),
+	headers := []string{"Id", "Completed", "Name", "Priority", "Tag"}
+
+	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+
+	for _, h := range headers {
+		fmt.Fprintf(w, "%s\t", h)
+	}
+	fmt.Fprintf(w, "\n")
+	for _, t := range tsk {
+		fmt.Fprintf(w, "%d\t", t.ID)
+		fmt.Fprintf(w, "%t\t", t.Completed)
+		fmt.Fprintf(w, "%s\t", strings.Split(t.Name, " ")[0])
+		fmt.Fprintf(w, "%s\t", t.Priority)
+		if t.Tag.Valid {
+			fmt.Fprintf(w, "%s\t", t.Tag.String)
+		} else {
+			fmt.Fprintf(w, " \t")
 		}
-
-		fmt.Fprintln(w, formatRow(cells))
+		fmt.Fprintf(w, "\n")
 	}
-
 	w.Flush()
 
 	return nil

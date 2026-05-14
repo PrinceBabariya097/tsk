@@ -119,11 +119,23 @@ func (q *Queries) GetAllTodo(ctx context.Context) ([]Todo, error) {
 
 const getAllTodos = `-- name: GetAllTodos :many
 SELECT id, name, completed, completed_at, created_at, updated_at, priority, tag FROM todos
-ORDER BY created_at DESC
+WHERE (CAST(?1 AS TEXT) IS NOT NULL OR CAST(?1 AS TEXT) IS NULL)
+ORDER BY 
+  CASE WHEN CAST(?1 AS TEXT) = 'priority' THEN priority END DESC,
+  CASE WHEN CAST(?1 AS TEXT) = 'created_at' THEN created_at END DESC,
+  id DESC
+LIMIT ?3 
+OFFSET ?2
 `
 
-func (q *Queries) GetAllTodos(ctx context.Context) ([]Todo, error) {
-	rows, err := q.db.QueryContext(ctx, getAllTodos)
+type GetAllTodosParams struct {
+	SortBy string `json:"sort_by"`
+	Offset int64  `json:"offset"`
+	Limit  int64  `json:"limit"`
+}
+
+func (q *Queries) GetAllTodos(ctx context.Context, arg GetAllTodosParams) ([]Todo, error) {
+	rows, err := q.db.QueryContext(ctx, getAllTodos, arg.SortBy, arg.Offset, arg.Limit)
 	if err != nil {
 		return nil, err
 	}
@@ -154,25 +166,123 @@ func (q *Queries) GetAllTodos(ctx context.Context) ([]Todo, error) {
 	return items, nil
 }
 
-const getTodoById = `-- name: GetTodoById :one
+const getPendingTodos = `-- name: GetPendingTodos :many
 SELECT id, name, completed, completed_at, created_at, updated_at, priority, tag FROM todos
-WHERE id = ?
+WHERE
+ CASE WHEN ?1 = 1 THEN completed = 1
+      WHEN ?2 = 1 THEN completed = 0
+      ELSE 1=1 END 
+ AND (CAST(?3 AS TEXT) IS NOT NULL OR CAST(?3 AS TEXT) IS NULL)
+ORDER BY 
+  CASE WHEN CAST(?3 AS TEXT) = 'priority' THEN priority END DESC,
+  CASE WHEN CAST(?3 AS TEXT) = 'created_at' THEN created_at END DESC,
+  id DESC
+LIMIT ?5 
+OFFSET ?4
 `
 
-func (q *Queries) GetTodoById(ctx context.Context, id int64) (Todo, error) {
-	row := q.db.QueryRowContext(ctx, getTodoById, id)
-	var i Todo
-	err := row.Scan(
-		&i.ID,
-		&i.Name,
-		&i.Completed,
-		&i.CompletedAt,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-		&i.Priority,
-		&i.Tag,
+type GetPendingTodosParams struct {
+	Completed interface{} `json:"completed"`
+	Pending   interface{} `json:"pending"`
+	SortBy    string      `json:"sort_by"`
+	Offset    int64       `json:"offset"`
+	Limit     int64       `json:"limit"`
+}
+
+func (q *Queries) GetPendingTodos(ctx context.Context, arg GetPendingTodosParams) ([]Todo, error) {
+	rows, err := q.db.QueryContext(ctx, getPendingTodos,
+		arg.Completed,
+		arg.Pending,
+		arg.SortBy,
+		arg.Offset,
+		arg.Limit,
 	)
-	return i, err
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Todo
+	for rows.Next() {
+		var i Todo
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.Completed,
+			&i.CompletedAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.Priority,
+			&i.Tag,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getTodoByPriority = `-- name: GetTodoByPriority :many
+SELECT id, name, completed, completed_at, created_at, updated_at, priority, tag FROM todos
+WHERE
+  CASE WHEN ?1 IS NOT NULL THEN priority = ?1
+        ELSE 1=1 END
+  AND (CAST(?2 AS TEXT) IS NOT NULL OR CAST(?2 AS TEXT) IS NULL)
+ORDER BY 
+  CASE WHEN CAST(?2 AS TEXT) = 'priority' THEN priority END DESC,
+  CASE WHEN CAST(?2 AS TEXT) = 'created_at' THEN created_at END DESC,
+  id DESC
+LIMIT ?4 
+OFFSET ?3
+`
+
+type GetTodoByPriorityParams struct {
+	Priority interface{} `json:"priority"`
+	SortBy   string      `json:"sort_by"`
+	Offset   int64       `json:"offset"`
+	Limit    int64       `json:"limit"`
+}
+
+func (q *Queries) GetTodoByPriority(ctx context.Context, arg GetTodoByPriorityParams) ([]Todo, error) {
+	rows, err := q.db.QueryContext(ctx, getTodoByPriority,
+		arg.Priority,
+		arg.SortBy,
+		arg.Offset,
+		arg.Limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Todo
+	for rows.Next() {
+		var i Todo
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.Completed,
+			&i.CompletedAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.Priority,
+			&i.Tag,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const getTodoCountById = `-- name: GetTodoCountById :one
@@ -186,6 +296,307 @@ func (q *Queries) GetTodoCountById(ctx context.Context, id int64) (int64, error)
 	var found int64
 	err := row.Scan(&found)
 	return found, err
+}
+
+const getTodosByFiltersByCreatedAt = `-- name: GetTodosByFiltersByCreatedAt :many
+WITH config AS (SELECT CAST(?8 AS INTEGER) AS is_desc)
+SELECT id, name, completed, completed_at, created_at, updated_at, priority, tag FROM todos 
+WHERE 
+  -- Filter by completion status
+  CASE 
+    WHEN ?1 = 1 THEN TRUE
+    WHEN ?2 = 1 THEN completed = 1
+    WHEN ?3 = 1 THEN completed = 0
+    ELSE TRUE
+  END
+  -- Filter by priority
+  AND CASE 
+    WHEN ?4 IS NOT NULL THEN priority = ?4
+    ELSE TRUE
+  END
+  -- Filter by tag
+  AND CASE 
+    WHEN ?5 IS NOT NULL THEN tag = ?5
+    ELSE TRUE
+  END
+ORDER BY 
+  CASE WHEN (SELECT is_desc FROM config) = 1 THEN created_at END DESC,
+  CASE WHEN (SELECT is_desc FROM config) = 0 THEN created_at END ASC,
+  id DESC
+LIMIT ?7 
+OFFSET ?6
+`
+
+type GetTodosByFiltersByCreatedAtParams struct {
+	All       interface{} `json:"all"`
+	Completed interface{} `json:"completed"`
+	Pending   interface{} `json:"pending"`
+	Priority  interface{} `json:"priority"`
+	Tag       interface{} `json:"tag"`
+	Offset    int64       `json:"offset"`
+	Limit     int64       `json:"limit"`
+	IsDesc    int64       `json:"is_desc"`
+}
+
+func (q *Queries) GetTodosByFiltersByCreatedAt(ctx context.Context, arg GetTodosByFiltersByCreatedAtParams) ([]Todo, error) {
+	rows, err := q.db.QueryContext(ctx, getTodosByFiltersByCreatedAt,
+		arg.All,
+		arg.Completed,
+		arg.Pending,
+		arg.Priority,
+		arg.Tag,
+		arg.Offset,
+		arg.Limit,
+		arg.IsDesc,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Todo
+	for rows.Next() {
+		var i Todo
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.Completed,
+			&i.CompletedAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.Priority,
+			&i.Tag,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getTodosByFiltersById = `-- name: GetTodosByFiltersById :many
+WITH config AS (SELECT CAST(?8 AS INTEGER) AS is_desc)
+SELECT id, name, completed, completed_at, created_at, updated_at, priority, tag FROM todos 
+WHERE 
+  -- Filter by completion status
+  CASE 
+    WHEN ?1 = 1 THEN TRUE
+    WHEN ?2 = 1 THEN completed = 1
+    WHEN ?3 = 1 THEN completed = 0
+    ELSE TRUE
+  END
+  -- Filter by priority
+  AND CASE 
+    WHEN ?4 IS NOT NULL THEN priority = ?4
+    ELSE TRUE
+  END
+  -- Filter by tag
+  AND CASE 
+    WHEN ?5 IS NOT NULL THEN tag = ?5
+    ELSE TRUE
+  END
+ORDER BY 
+  CASE WHEN (SELECT is_desc FROM config) = 1 THEN id END DESC,
+  CASE WHEN (SELECT is_desc FROM config) = 0 THEN id END ASC,
+  id DESC
+LIMIT ?7 
+OFFSET ?6
+`
+
+type GetTodosByFiltersByIdParams struct {
+	All       interface{} `json:"all"`
+	Completed interface{} `json:"completed"`
+	Pending   interface{} `json:"pending"`
+	Priority  interface{} `json:"priority"`
+	Tag       interface{} `json:"tag"`
+	Offset    int64       `json:"offset"`
+	Limit     int64       `json:"limit"`
+	IsDesc    int64       `json:"is_desc"`
+}
+
+func (q *Queries) GetTodosByFiltersById(ctx context.Context, arg GetTodosByFiltersByIdParams) ([]Todo, error) {
+	rows, err := q.db.QueryContext(ctx, getTodosByFiltersById,
+		arg.All,
+		arg.Completed,
+		arg.Pending,
+		arg.Priority,
+		arg.Tag,
+		arg.Offset,
+		arg.Limit,
+		arg.IsDesc,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Todo
+	for rows.Next() {
+		var i Todo
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.Completed,
+			&i.CompletedAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.Priority,
+			&i.Tag,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getTodosByFiltersByPriority = `-- name: GetTodosByFiltersByPriority :many
+WITH config AS (SELECT CAST(?8 AS INTEGER) AS is_desc)
+SELECT id, name, completed, completed_at, created_at, updated_at, priority, tag FROM todos 
+WHERE 
+  -- Filter by completion status
+  CASE 
+    WHEN ?1 = 1 THEN TRUE
+    WHEN ?2 = 1 THEN completed = 1
+    WHEN ?3 = 1 THEN completed = 0
+    ELSE TRUE
+  END
+  -- Filter by priority
+  AND CASE 
+    WHEN ?4 IS NOT NULL THEN priority = ?4
+    ELSE TRUE
+  END
+  -- Filter by tag
+  AND CASE 
+    WHEN ?5 IS NOT NULL THEN tag = ?5
+    ELSE TRUE
+  END
+ORDER BY 
+  CASE WHEN (SELECT is_desc FROM config) = 1 THEN priority END DESC,
+  CASE WHEN (SELECT is_desc FROM config) = 0 THEN priority END ASC,
+  id DESC
+LIMIT ?7 
+OFFSET ?6
+`
+
+type GetTodosByFiltersByPriorityParams struct {
+	All       interface{} `json:"all"`
+	Completed interface{} `json:"completed"`
+	Pending   interface{} `json:"pending"`
+	Priority  interface{} `json:"priority"`
+	Tag       interface{} `json:"tag"`
+	Offset    int64       `json:"offset"`
+	Limit     int64       `json:"limit"`
+	IsDesc    int64       `json:"is_desc"`
+}
+
+func (q *Queries) GetTodosByFiltersByPriority(ctx context.Context, arg GetTodosByFiltersByPriorityParams) ([]Todo, error) {
+	rows, err := q.db.QueryContext(ctx, getTodosByFiltersByPriority,
+		arg.All,
+		arg.Completed,
+		arg.Pending,
+		arg.Priority,
+		arg.Tag,
+		arg.Offset,
+		arg.Limit,
+		arg.IsDesc,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Todo
+	for rows.Next() {
+		var i Todo
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.Completed,
+			&i.CompletedAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.Priority,
+			&i.Tag,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getTodosByTag = `-- name: GetTodosByTag :many
+SELECT id, name, completed, completed_at, created_at, updated_at, priority, tag FROM todos
+WHERE
+  CASE WHEN ?1 IS NOT NULL THEN tag = ?1
+        ELSE 1=1 END
+  AND (CAST(?2 AS TEXT) IS NOT NULL OR CAST(?2 AS TEXT) IS NULL)
+ORDER BY 
+  CASE WHEN CAST(?2 AS TEXT) = 'priority' THEN priority END DESC,
+  CASE WHEN CAST(?2 AS TEXT) = 'created_at' THEN created_at END DESC,
+  id DESC
+LIMIT ?4 
+OFFSET ?3
+`
+
+type GetTodosByTagParams struct {
+	Tag    interface{} `json:"tag"`
+	SortBy string      `json:"sort_by"`
+	Offset int64       `json:"offset"`
+	Limit  int64       `json:"limit"`
+}
+
+func (q *Queries) GetTodosByTag(ctx context.Context, arg GetTodosByTagParams) ([]Todo, error) {
+	rows, err := q.db.QueryContext(ctx, getTodosByTag,
+		arg.Tag,
+		arg.SortBy,
+		arg.Offset,
+		arg.Limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Todo
+	for rows.Next() {
+		var i Todo
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.Completed,
+			&i.CompletedAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.Priority,
+			&i.Tag,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const markTodoComplete = `-- name: MarkTodoComplete :exec
